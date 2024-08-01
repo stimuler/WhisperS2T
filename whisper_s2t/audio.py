@@ -39,25 +39,38 @@ with tempfile.TemporaryDirectory() as tmpdir:
         
 
 def load_audio(input_file, sr=16000, return_duration=False):
-    
-    try:
-        with wave.open(input_file, 'rb') as wf:
-            if (wf.getframerate() != sr) or (wf.getnchannels() != 1):
-                raise Exception("Not a 16kHz wav mono channel file!")
+    if isinstance(input_file, np.ndarray):
+        # Input is already a numpy array
+        audio_signal = input_file
+        if audio_signal.dtype != np.float32:
+            audio_signal = audio_signal.astype(np.float32)
+        if np.max(np.abs(audio_signal)) > 1.0:
+            audio_signal /= 32768.0  # Normalize if it's in int16 range
+    else:
+        # Input is a file path
+        try:
+            with wave.open(input_file, 'rb') as wf:
+                if (wf.getframerate() != sr) or (wf.getnchannels() != 1):
+                    raise Exception("Not a 16kHz wav mono channel file!")
                 
-            frames = wf.getnframes()
-            x = wf.readframes(int(frames))
-    except:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            wav_file = f"{tmpdir}/tmp.wav"
-            ret_code = os.system(f'ffmpeg -hide_banner -loglevel panic -i "{input_file}" -threads 1 -acodec pcm_s16le -ac 1 -af aresample=resampler={RESAMPLING_ENGINE} -ar {sr} "{wav_file}" -y')
-            if ret_code != 0: raise RuntimeError("ffmpeg failed to resample the input audio file, make sure ffmpeg is compiled properly!")
-        
-            with wave.open(wav_file, 'rb') as wf:
                 frames = wf.getnframes()
                 x = wf.readframes(int(frames))
-    
-    audio_signal = np.frombuffer(x, np.int16).flatten().astype(np.float32)/32768.0
+        except:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                wav_file = f"{tmpdir}/tmp.wav"
+                ret_code = os.system(f'ffmpeg -hide_banner -loglevel panic -i "{input_file}" -threads 1 -acodec pcm_s16le -ac 1 -af aresample=resampler={RESAMPLING_ENGINE} -ar {sr} "{wav_file}" -y')
+                if ret_code != 0: raise RuntimeError("ffmpeg failed to resample the input audio file, make sure ffmpeg is compiled properly!")
+            
+                with wave.open(wav_file, 'rb') as wf:
+                    frames = wf.getnframes()
+                    x = wf.readframes(int(frames))
+        
+        audio_signal = np.frombuffer(x, np.int16).flatten().astype(np.float32)/32768.0
+
+    # Ensure the audio is mono
+    if len(audio_signal.shape) > 1:
+        audio_signal = np.mean(audio_signal, axis=1)
+
     audio_duration = len(audio_signal)/sr
     
     if return_duration:
